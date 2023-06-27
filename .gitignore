@@ -1,0 +1,4 @@
+source
+script_test/*/node_modules
+*.log
+node_modules
