@@ -6,9 +6,11 @@ const express = require("express");
 //const log = fs.createWriteStream("run " + (new Date()).toString() + ".log");
 const log = fs.createWriteStream("run.log");
 const log2 = fs.createWriteStream("test.log");
+const log3 = fs.createWriteStream("deploy.log");
 
 var stagingDeployProc;
 var stagingTestProc;
+var prodDeployProc;
 
 function initPrebuild() {
     cp.exec("./scripts/prebuild.sh", (e, out, err) => {
@@ -82,8 +84,30 @@ function initTesting() {
 }
 
 function initDeploy() {
-    console.log("ALL OK");
-    server.close();
+    prodDeployProc = cp.spawn("./scripts/deploy.sh");
+
+    prodDeployProc.stdout.on("data", e => {
+        e = e.toString();
+        console.log("OUT3 " + e);
+
+        log3.write(e);
+    })
+
+    prodDeployProc.stderr.on("data", e => {
+        console.log("ERR3 " + e);
+        log3.write(e);
+    })
+
+    prodDeployProc.on("exit", e => {
+        console.log("EXIT3 : " + e);
+    })
+
+    prodDeployProc.on("close", e => {
+        console.log("CLOSE3 " + e)
+        server.close();
+        log3.write("EXIT CODE " + e);
+        log3.close();
+    })
 }
 
 const app = express();

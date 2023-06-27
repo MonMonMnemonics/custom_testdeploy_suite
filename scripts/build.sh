@@ -1,7 +1,4 @@
 #! /bin/bash
-[ -d "source" ] && rm -f -r "source"
-
-#git clone https://github.com/MonMonMnemonics/gmailsmtp2.git source/app
 
 #cd source
 
