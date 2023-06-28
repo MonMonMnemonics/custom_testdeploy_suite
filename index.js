@@ -1,6 +1,7 @@
 const cp = require("node:child_process")
 const fs = require("fs");
 const axios = require("axios");
+const express = require("express");
 
 //const log = fs.createWriteStream("run " + (new Date()).toString() + ".log");
 const log = fs.createWriteStream("run.log");
@@ -9,13 +10,15 @@ const log2 = fs.createWriteStream("test.log");
 var stagingDeployProc;
 var stagingTestProc;
 
-cp.exec("./scripts/prebuild.sh", (e, out, err) => {
-    if ((!e) && (err == "")) {
-        main();
-    }
-});
+function initPrebuild() {
+    cp.exec("./scripts/prebuild.sh", (e, out, err) => {
+        if ((!e) && (err == "")) {
+            initServer();
+        }
+    });    
+}
 
-function main() {
+function initServer() {
     stagingDeployProc = cp.spawn("./scripts/build.sh");
 
     stagingDeployProc.stdout.on("data", e => {
@@ -68,6 +71,7 @@ function initTesting() {
             //stagingDeployProc.stdin.write("TERMINATE\n");
             //stagingDeployProc.kill('SIGINT');
             axios.get("http://localhost:3000/END");
+            initDeploy();
         } else {
             axios.get("http://localhost:3000/END");
             log2.write("ERR NO GOOD " + e);
@@ -78,5 +82,37 @@ function initTesting() {
 }
 
 function initDeploy() {
-
+    console.log("ALL OK");
+    server.close();
 }
+
+const app = express();
+
+app.get("/initialize", async function (req, res) {
+    initPrebuild();
+    return res.status(200).send("OK");
+})
+
+const crypto = require("crypto");
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+
+function verify_signature(req) {
+  const signature = crypto
+    .createHmac("sha256", WEBHOOK_SECRET)
+    .update(JSON.stringify(req.body))
+    .digest("hex");
+  return `sha256=${signature}` === req.headers.get("x-hub-signature-256");
+};
+
+app.post("/ghwebhook", async function (req, res) {
+    if (!verify_signature(req)) {
+        return res.status(401).send("Unauthorized");
+    } else {
+        initPrebuild();
+        return res.status(200).send("OK");
+    }
+});
+
+const server = app.listen(4000, () => {
+    console.log("SERVER READY");
+})
