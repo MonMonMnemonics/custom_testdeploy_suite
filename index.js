@@ -2,16 +2,21 @@ const cp = require("node:child_process")
 const fs = require("fs");
 const axios = require("axios");
 const express = require("express");
-
-//const log = fs.createWriteStream("run " + (new Date()).toString() + ".log");
-const log = fs.createWriteStream("run.log");
-const log2 = fs.createWriteStream("test.log");
-const log3 = fs.createWriteStream("deploy.log");
+const config = require("./config.json");
 
 var stagingDeployProc;
 var stagingTestProc;
 var prodDeployProc;
 
+function currentTimestamp() {
+    let timestamp = (new Date()).toString().replace(/:/ig, "-");
+    if (timestamp.indexOf("(") != -1) {
+        timestamp = timestamp.substring(0, timestamp.indexOf("(")).trim();
+    }
+    return timestamp;
+}
+
+//------------------------- SHELL ENGINE -------------------------
 function initPrebuild() {
     cp.exec("./scripts/prebuild.sh", (e, out, err) => {
         if ((!e) && (err == "")) {
@@ -21,6 +26,7 @@ function initPrebuild() {
 }
 
 function initServer() {
+    const log = fs.createWriteStream(currentTimestamp() + " run.log");
     stagingDeployProc = cp.spawn("./scripts/build.sh");
 
     stagingDeployProc.stdout.on("data", e => {
@@ -45,7 +51,7 @@ function initServer() {
     })
 
     stagingDeployProc.on("close", e => {
-        if (e == 137) {
+        if (e == 0) {
             initDeploy();
         }
         console.log("CLOSE " + e)
@@ -55,6 +61,7 @@ function initServer() {
 }
 
 function initTesting() {
+    const log2 = fs.createWriteStream(currentTimestamp() + " test.log");
     stagingTestProc = cp.spawn("./scripts/test.sh");
 
     stagingTestProc.stdout.on("data", e => {
@@ -73,7 +80,6 @@ function initTesting() {
             //stagingDeployProc.stdin.write("TERMINATE\n");
             //stagingDeployProc.kill('SIGINT');
             axios.get("http://localhost:3000/END");
-            initDeploy();
         } else {
             axios.get("http://localhost:3000/END");
             log2.write("ERR NO GOOD " + e);
@@ -84,6 +90,7 @@ function initTesting() {
 }
 
 function initDeploy() {
+    const log3 = fs.createWriteStream(currentTimestamp() + "deploy.log");
     prodDeployProc = cp.spawn("./scripts/deploy.sh");
 
     prodDeployProc.stdout.on("data", e => {
@@ -104,21 +111,18 @@ function initDeploy() {
 
     prodDeployProc.on("close", e => {
         console.log("CLOSE3 " + e)
-        server.close();
         log3.write("EXIT CODE " + e);
         log3.close();
     })
 }
+//------------------------- *** -------------------------
+
+
 
 const app = express();
-
-app.get("/initialize", async function (req, res) {
-    initPrebuild();
-    return res.status(200).send("OK");
-})
-
+//------------------------- BY GH WEBHOOK -------------------------
 const crypto = require("crypto");
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET ? process.env.WEBHOOK_SECRET : (config.WEBHOOK_SECRETS ? config.WEBHOOK_SECRETS : "" );
 
 function verify_signature(req) {
   const signature = crypto
@@ -129,6 +133,10 @@ function verify_signature(req) {
 };
 
 app.post("/ghwebhook", async function (req, res) {
+    if (req.headers.get(X-GitHub-Event) != "push") {
+        return res.status(200).send("OK");
+    }
+
     if (!verify_signature(req)) {
         return res.status(401).send("Unauthorized");
     } else {
@@ -136,7 +144,43 @@ app.post("/ghwebhook", async function (req, res) {
         return res.status(200).send("OK");
     }
 });
+//------------------------- *** -------------------------
+
+//------------------------- PUB SUB SYSTEM -------------------------
+const headerPubsub = {
+    'Content-Type': 'text/event-stream',
+    'Connection': 'keep-alive',
+    'Cache-Control': 'no-cache',
+    "Access-Control-Allow-Origin": "*",
+    'X-Accel-Buffering': 'no'    
+}
+let streamRes = [];
+app.get('/streaminit', async function (req, res) {
+    const UniqueID = Date.now();
+    streamRes.push({
+        ID: UniqueID,
+        res
+    });
+
+    res.writeHead(200, headerPubsub);
+    res.flushHeaders();
+    res.write("data: { \"flag\":\"connect\", \"content\":\"START PUBSUB SYSTEM\"}\n\n");
+
+    req.on('close', () => {
+        streamRes = streamRes.filter(e => e.ID !== UniqueID);
+    });    
+})
+function pinger() {
+    streamRes.forEach(c => c.res.write("data:{}\n\n"));
+}
+//------------------------- *** -------------------------
+
+app.get("/initialize", async function (req, res) {
+    initPrebuild();
+    return res.status(200).send("OK");
+})
 
 const server = app.listen(4000, () => {
+    setInterval(pinger, 1000*10);
     console.log("SERVER READY");
 })

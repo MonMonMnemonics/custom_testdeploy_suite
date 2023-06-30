@@ -10,9 +10,9 @@
 cd script_test/app
 npm run start 
 
+#-------------------- ONLY MANUAL SERVER SHUT DOWN --------------------
 #cd script_test/app
 #npm run start &
-
 #serverPID=$!
 
 #while true; do
